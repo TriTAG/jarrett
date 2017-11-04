@@ -15,38 +15,41 @@ utm17 = pyproj.Proj(proj='utm', zone=17, ellps='WGS84')
 google = pyproj.Proj(init='epsg:4326')
 project = partial(pyproj.transform, utm17, google)
 
-print('Loading GTFS...')
-loader = transitfeed.Loader('../GRT_GTFS_w17')
-schedule = loader.Load()
+def getScheduleAndShapes():
+    print('Loading GTFS...')
+    loader = transitfeed.Loader('../GRT_GTFS_w17')
+    schedule = loader.Load()
 
-linestrings = {}
-terminals = []
-
-
-print('Calculating {} shapes...'.format(len(schedule.GetShapeList())))
-for shape in schedule.GetShapeList():
-    points = []
-    for lat, lng, dst in shape.points:
-        x, y = utm17(lng, lat)
-        points.append([x, y])
-    linestring = LineString(points)
-    linestrings[shape.shape_id] = linestring
-    for i in 0, -1:
-        terminals.append(linestring.coords[i])
-
-terminals = [Point(p) for p in set(terminals)]
-
-print('Processing roundabouts...')
-roundabouts = []
-with open('Roads.geojson.json') as fp:
-    roads = json.load(fp)
-for road in roads['features']:
-    if road['properties']['CartoClass'] == 'Roundabout':
-        points = zip(*utm17(*zip(*road['geometry']['coordinates'])))
-        roundabouts.append(LineString(points))
+    linestrings = {}
+    terminals = []
 
 
-def getTopologyAndRoutes(routeLines, supplementaryLines, debugFolder=None):
+    print('Calculating {} shapes...'.format(len(schedule.GetShapeList())))
+    for shape in schedule.GetShapeList():
+        points = []
+        for lat, lng, dst in shape.points:
+            x, y = utm17(lng, lat)
+            points.append([x, y])
+        linestring = LineString(points)
+        linestrings[shape.shape_id] = linestring
+        for i in 0, -1:
+            terminals.append(linestring.coords[i])
+
+    terminals = [Point(p) for p in set(terminals)]
+
+    print('Processing roundabouts...')
+    roundabouts = []
+    with open('Roads.geojson.json') as fp:
+        roads = json.load(fp)
+    for road in roads['features']:
+        if road['properties']['CartoClass'] == 'Roundabout':
+            points = zip(*utm17(*zip(*road['geometry']['coordinates'])))
+            roundabouts.append(LineString(points))
+
+    return schedule, linestrings, terminals, roundabouts
+
+
+def getTopologyAndRoutes(routeLines, terminals, supplementaryLines, debugFolder=None):
     print('Calculating topology...')
     ls = list(routeLines.values()) + supplementaryLines
     G = nt.getNetworkTopology(ls, minInnerPerimeter=300,
@@ -119,7 +122,14 @@ def getTopologyAndRoutes(routeLines, supplementaryLines, debugFolder=None):
                 json.dump(data, fp)
     return G, paths
 
-G, shapePaths = getTopologyAndRoutes(linestrings, roundabouts, 'debug')
+
+schedule, linestrings, terminals, roundabouts = getScheduleAndShapes()
+# G, shapePaths = getTopologyAndRoutes(linestrings, terminals, roundabouts, 'debug')
+#
+# with open('jarret.pickle', 'w') as fp:
+#     pickle.dump((G, shapePaths), fp)
+with open('jarret.pickle') as fp:
+    (G, shapePaths) = pickle.load(fp)
 
 TG = TransitGraph(G, shapePaths, schedule)
 M = SimpleMap(TG)

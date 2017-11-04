@@ -2,21 +2,7 @@ import networkx as nx
 import numpy as np
 import math
 from itertools import combinations, cycle
-from util import edgeKey, firstNode, fullEdge
-
-
-def _getDirection(line, distance):
-    """Unit vector in direction of line at normalized distance."""
-    if distance == line.length:
-        n1 = 1. - 1e-9
-        n2 = 1.
-    else:
-        n1 = distance / line.length
-        n2 = n1 + 1e-9
-    p1 = line.interpolate(n1, normalized=True)
-    p2 = line.interpolate(n2, normalized=True)
-    v = np.array([p2.x - p1.x, p2.y - p1.y])
-    return v / np.linalg.norm(v)
+from util import edgeKey, firstNode, fullEdge, getDirection
 
 
 class TransitGraph():
@@ -46,7 +32,7 @@ class TransitGraph():
                                             junction=False, routes={},
                                             sides={})
                     connections.append((a, b, i))
-                    d = _getDirection(graph[u][v][i]['geom'], 0)
+                    d = getDirection(graph[u][v][i]['geom'], 0)
                     directions.append(math.atan2(d[1], d[0]))
                     self.graph.node[(u, (a, b, i))]['order'] = []
             for A, B in combinations(connections, 2):
@@ -63,7 +49,7 @@ class TransitGraph():
                 elif A == curA:
                     curA = None
                 else:
-                    self.graph.node[(u, curA)]['order'].append(A)
+                    self.graph.node[(u, curA)]['order'].append((u, A))
                 # Code review from Junia, 15 months:
                 # msvv      x      Qqgg      ygA
 
@@ -107,37 +93,40 @@ class TransitGraph():
     def _compareRoutes(self, startEdge, route1, route2):
         total = 0
         visited = {}
+        startEdge = fullEdge(startEdge[0])
         queue = [(startEdge, 1)]
         while queue:
             (A, B), direction = queue.pop()
             if (A, B) in visited:
                 continue
             visited[A, B] = direction
-            total += direction * self._getSideVotes(A, route1, route2)
-            total -= direction * self._getSideVotes(B, route1, route2)
+            total -= direction * self._getSideVotes(A, route1, route2)
+            total += direction * self._getSideVotes(B, route1, route2)
 
             a, (u, v, i) = A
             for nextNode in self.graph.nodes[A]['order']:
-                nextEdge = fullEdge((a, nextNode))
+                nextEdge = fullEdge(nextNode)
                 if (route1 in self.graph.edges[nextEdge]['routes'] and
                         route2 in self.graph.edges[nextEdge]['routes']):
-                    if firstNode((a, nextNode)):
-                            queue.insert(0, (nextEdge, -direction))
+                    if firstNode(nextNode):
+                        queue.insert(0, (nextEdge, -direction))
                     else:
                         queue.insert(0, (nextEdge, direction))
 
             b, (u, v, i) = B
             for nextNode in self.graph.nodes[B]['order']:
-                nextEdge = fullEdge((b, nextNode))
+                nextEdge = fullEdge(nextNode)
                 if (route1 in self.graph.edges[nextEdge]['routes'] and
                         route2 in self.graph.edges[nextEdge]['routes']):
-                    if firstNode((b, nextNode)):
+                    if firstNode(nextNode):
                         queue.insert(0, (nextEdge, direction))
                     else:
                         queue.insert(0, (nextEdge, -direction))
 
-        total += 0.5  # break ties
-        side = total ** 0  # 1 or -1
+        if total >= 0:  # break ties in favour of right
+            side = 1
+        else:
+            side = -1
         for edge, direction in visited.items():
             self.graph.edges[edge]['sides'][route1, route2] = side * direction
             self.graph.edges[edge]['sides'][route2, route1] = -side * direction
@@ -155,7 +144,7 @@ class TransitGraph():
         found1 = []
         found2 = []
         for i, turn in enumerate(self.graph.node[node]['order']):
-            routes = self.graph.edges[node, (n, turn)]['routes']
+            routes = self.graph.edges[node, turn]['routes']
             if route1 in routes:
                 found1.append(i)
             if route2 in routes:
