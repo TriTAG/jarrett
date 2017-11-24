@@ -27,12 +27,14 @@ class TransitGraph():
                 for i in graph[u][v]:
                     a, b, i = edgeKey(u, v, i)
                     A, B = (a, (a, b, i)), (b, (a, b, i))
+                    geom = graph[a][b][i]['geom'].simplify(1e-3)
                     if (A, B) not in self.graph.edges:
-                        self.graph.add_edge(A, B, geom=graph[a][b][i]['geom'],
+                        self.graph.add_edge(A, B, geom=geom,
                                             junction=False, routes={},
                                             sides={})
                     connections.append((a, b, i))
-                    d = getDirection(graph[u][v][i]['geom'], 0)
+                    __, d = getDirection(geom, firstNode((u, (a, b, i))))
+                    #print A, B, d
                     directions.append(math.atan2(d[1], d[0]))
                     self.graph.node[(u, (a, b, i))]['order'] = []
             for A, B in combinations(connections, 2):

@@ -1,11 +1,14 @@
 import unittest
 from ..graph import TransitGraph
 from ..transitmap import SimpleMap
+from ..util import getDirection
 import pyproj
 import networkx as nx
 import transitfeed
 from shapely.geometry import LineString
-import random
+#import random
+import numpy as np
+import json
 
 rawCoords = {
     70: [-80.48768520355225, 43.436623180360456],
@@ -106,6 +109,48 @@ class SideTestCase(unittest.TestCase):
         M.renderAsJson('test2.geojson')
         xxx
 
+    def test_getDirection(self):
+        utm17 = pyproj.Proj(proj='utm', zone=17, ellps='WGS84')
+        coords = [[-80.39754230401647, 43.38375068307302], [-80.39810758481725, 43.384572962650516], [-80.39811104771799, 43.38457870240967], [-80.39811370377276, 43.38458466655962], [-80.39811552619042, 43.384590794941516], [-80.39811649658843, 43.38459702573992], [-80.39811660517837, 43.38460329610637], [-80.39811585086464, 43.38460954279318], [-80.39802435560486, 43.38508973765457], [-80.39802298762613, 43.38509515308006], [-80.39802097076965, 43.385100459539885], [-80.39801832072203, 43.385105615761304], [-80.39801505809473, 43.38511058164007], [-80.39771385589908, 43.38552147743032], [-80.3977372041496, 43.38582115009315]]
+        l = LineString([utm17(*c) for c in coords])
+        __, dA = getDirection(l, True)
+        __, dB = getDirection(l, False)
+        A = np.array(l.coords[0])
+        B = np.array(l.coords[-1])
+        features = []
+        features.append({"type": "Feature",
+                         "properties": {
+                                'stroke-width': 3,
+                                'stroke': '#00ff00',
+                            },
+                         "geometry": {
+                            "type": "LineString",
+                            "coordinates": [utm17(*c, inverse=True) for c in l.parallel_offset(10).coords[:]]
+                         }})
+        features.append({"type": "Feature",
+                         "properties": {
+                                'stroke-width': 3,
+                                'stroke': '#ff0000',
+                            },
+                         "geometry": {
+                            "type": "LineString",
+                            "coordinates": [utm17(*c, inverse=True) for c in [list(A), list(A + dA*100)]]
+                         }})
+        features.append({"type": "Feature",
+                         "properties": {
+                                'stroke-width': 3,
+                                'stroke': '#ff0000',
+                            },
+                         "geometry": {
+                            "type": "LineString",
+                            "coordinates": [utm17(*c, inverse=True) for c in [list(B), list(B + dB*100)]]
+                         }})
+        data = {"type": "FeatureCollection",
+                "features": features}
+        with open('test3.geojson', 'w') as fp:
+            json.dump(data, fp)
+
+
     def setUp(self):
         utm17 = pyproj.Proj(proj='utm', zone=17, ellps='WGS84')
 
@@ -135,7 +180,10 @@ class SideTestCase(unittest.TestCase):
                        (100, 90, 0), (90, 80, 0), (80, 85, 0), (85, 70, 0),
                        (70, 80, 0)],
             'shape6': [(94, 91, 0), (91, 100, 0), (100, 90, 0), (90, 80, 0),
-                       (80, 71, 0), (71, 85, 0), (85, 80, 0)]
+                       (80, 71, 0), (71, 85, 0), (85, 80, 0)],
+            'shape7': [(89, 92, 0), (92, 81, 0), (81, 91, 0), (91, 93, 0),
+                       (93, 82, 0), (82, 91, 0), (91, 83, 0), (83, 94, 0),
+                       (94, 91, 0), (91, 100, 0)]
         }
         colours = {
             'shape1': 'ff0000',
@@ -143,7 +191,11 @@ class SideTestCase(unittest.TestCase):
             'shape3': '0000ff',
             'shape4': 'ff00ff',
             'shape5': '669900',
-            'shape6': '996600'
+            'shape6': '996600',
+            'shape7': '990066',
+            'shape8': '660099',
+            'shape9': '009966',
+            'shape10': '006699',
         }
 
         for p in self.paths:
