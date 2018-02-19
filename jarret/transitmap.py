@@ -3,11 +3,12 @@ import math
 import pyproj
 import json
 import numpy as np
-from itertools import product
+from itertools import product, combinations, count
 from shapely.geometry import Point, LineString
 from util import firstNode, fullEdge, getDirection, intersection
 from bisect import bisect_left
 from scipy.interpolate import interp1d
+from pulp import LpProblem, LpVariable, lpSum, LpStatus, value as lpvalue
 
 class SimpleMap():
     def __init__(self, transitGraph, thickness=3, spacing=1, minRadius=10,
@@ -29,89 +30,106 @@ class SimpleMap():
                 self.graph.edges[edge]['sequence'] = []
                 self.graph.edges[edge]['width'] = 0
                 self.graph.edges[edge]['geom'] = self.graph.edges[edge]['geom'].simplify(self.totalThickness / 2.)
-        for route in self.schedule.GetRouteList():
-            if route.route_color != '':
-                self._placeRoute(route.route_id)
+        self._sortRoutes()
+        # for route in self.schedule.GetRouteList():
+        #     if route.route_color != '':
+        #         self._placeRoute(route.route_id)
         self._findOffsets()
         self._collapseEdges()
 
-    def _placeRoute(self, route_id):
-        print 'Route', route_id
-        startEdge = None
-        for edge in self.graph.edges:
-            if not self.graph.edges[edge]['junction']:
-                if route_id in self.graph.edges[edge]['routes']:
-                    startEdge = edge
-                    break
-        if not startEdge:
-            return
-        visited = []
-        A, B = startEdge
-        startEdge = fullEdge(A)
-        stack = [(startEdge, None, None, None)]
-        while stack:
-            nextEdge, nextNode, lastEdge, lastNode = stack.pop()
-            if nextEdge in visited:
-                continue
-            visited.append(nextEdge)
-            ll = int(1e0)
-            lr = int(-1e10)
-            A, B = nextEdge
-            print nextEdge
-            self.graph.edges[nextEdge]['width'] += self._getTotalThickness(nextEdge, route_id)
-            currentOrder = self.graph.edges[nextEdge]['sequence']
-            if nextNode is not None:
-                lastOrder = self.graph.edges[lastEdge]['sequence']
-                # if firstNode(nextNode) != firstNode(lastNode):
-                #     lastOrder = list(reversed(lastOrder))
-                if set(lastOrder) == set(currentOrder + [route_id]):
-                    if firstNode(nextNode) != firstNode(lastNode):
-                        lr = lastOrder.index(route_id)
-                    else:
-                        lr = len(currentOrder) - lastOrder.index(route_id)
-                    ll = lr + 1
-                else:
-                    found = False
-                    if firstNode(nextNode) != firstNode(lastNode):
-                        lo = lastOrder
-                    else:
-                        lo = list(reversed(lastOrder))
-                    for other_route in lo:
-                        if other_route == route_id:
-                            found = True
-                        elif found and other_route in currentOrder:
-                            if self.graph.edges[lastEdge]['sides'][route_id, other_route] == 1:
-                                ll = currentOrder.index(other_route)
-                        elif not found and other_route in currentOrder:
-                            if self.graph.edges[lastEdge]['sides'][route_id, other_route] == -1:
-                                lr = currentOrder.index(other_route)
-                                break
-            print lr, ll
-            if nextNode is None or firstNode(nextNode):
-                for i in range(max(lr, 0), min(ll, len(currentOrder))):
-                    if route_id != currentOrder[i] and self.graph.edges[nextEdge]['sides'][route_id, currentOrder[i]] == 1:
-                        currentOrder.insert(i, route_id)
-                        break
-                if route_id not in currentOrder:
-                    currentOrder.insert(ll, route_id)
-            else:
-                for i in range(min(ll, len(currentOrder)) - 1, max(lr, 0) - 1, -1):
-                    if route_id != currentOrder[i] and self.graph.edges[nextEdge]['sides'][route_id, currentOrder[i]] == -1:
-                        currentOrder.insert(i, route_id)
-                        break
-                if route_id not in currentOrder:
-                    currentOrder.insert(lr, route_id)
+    def _sortRoutes(self):
+        def edgeString(edge):
+            (a, (a, b, i)), (b, (a, b, i)) = edge
+            return '{}_{}_{}'.format(a, b, i)
+        crossings = []
+        seq_vars = {}
+        pre_vars = {}
 
-            a, e = A
-            for N in self.graph.node[A]['order']:
-                edge = fullEdge(N)
-                if route_id in self.graph.edges[edge]['routes']:
-                    stack.append((edge, N, nextEdge, A))
-            b, e = B
-            for N in self.graph.node[B]['order']:
-                edge = fullEdge(N)
-                if route_id in self.graph.edges[edge]['routes']:
-                    stack.append((edge, N, nextEdge, B))
+        problem = LpProblem('route_crossings')
+        problem += 0, 'Minimize crossings'
+        for edge in self.graph.edges:
+
+            currentEdge = self.graph.edges[edge]
+            edge = fullEdge(edge[0])
+            if not currentEdge['junction']:
+                routes = [r for r in sorted(currentEdge['routes'])
+                          if self.schedule.GetRoute(r).route_color != '']
+                N = len(routes)
+                estr = 'edge_' + edgeString(edge) + '_{}'
+                s = {r: LpVariable(estr.format(r), 0, N-1, cat='Integer')
+                     for r in routes}
+                seq_vars[edge] = s
+                estr += '_{}'
+                pre_vars[edge] = {}
+                for (r1, r2) in combinations(routes, 2):
+                    pre = LpVariable(estr.format(r1, r2), cat='Binary')
+                    pre_vars[edge][r1, r2] = pre
+                    problem += s[r1] + 1 <= s[r2] + N * (1 - pre), ''
+                    problem += s[r2] + 1 <= s[r1] + N * pre, ''
+
+        c_ctr = count()
+        for edge in self.graph.edges:
+            edge = fullEdge(edge[0])
+            currentEdge = self.graph.edges[edge]
+            if not currentEdge['junction']:
+                routes = [r for r in currentEdge['routes']
+                          if self.schedule.GetRoute(r).route_color != '']
+                p_edge = pre_vars[edge]
+                for end in edge:
+                    currentNode = self.graph.node[end]
+                    for other in currentNode['order']:
+                        junction = self.graph.edges[end, other]
+                        j_routes = [r for r in junction['routes'] if r in routes]
+                        otherEdge = fullEdge(other)
+                        p_other = pre_vars[otherEdge]
+                        for r1, r2 in combinations(j_routes, 2):
+                            if r2 < r1:
+                                r1, r2 = r2, r1
+                            if (r1, r2) not in p_edge or (r1, r2) not in p_other:
+                                continue
+                            c = LpVariable('c_{}'.format(c_ctr.next()), cat='Binary')
+                            if firstNode(end) == firstNode(other):
+                                problem += p_edge[r1, r2] + p_other[r1, r2] - 1 <= c, ''
+                                problem += 1 - p_edge[r1, r2] - p_other[r1, r2] <= c, ''
+                            else:
+                                problem += p_edge[r1, r2] - p_other[r1, r2] <= c, ''
+                                problem += p_other[r1, r2] - p_edge[r1, r2] <= c, ''
+                            crossings.append(c)
+                    for o1, o2 in combinations(currentNode['order'], 2):
+                        j1 = self.graph.edges[end, o1]
+                        j2 = self.graph.edges[end, o2]
+                        jr1 = [r for r in j1['routes'] if r in routes]
+                        jr2 = [r for r in j2['routes'] if r in routes]
+                        for r1, r2 in product(jr1, jr2):
+                            if r1 == r2:
+                                continue
+                            reverse = not firstNode(end)
+                            if r1 > r2:
+                                p = p_edge[r2, r1]
+                                reverse = not reverse
+                            else:
+                                p = p_edge[r1, r2]
+                            c = LpVariable('c_{}'.format(c_ctr.next()), cat='Binary')
+                            if reverse:
+                                problem += (1 - p == c), ''
+                            else:
+                                problem += p == c, ''
+                            crossings.append(c*0.5)
+        problem.setObjective(lpSum(crossings))
+        #print problem
+        problem.writeLP('crossings.lp')
+        problem.solve()
+        print lpvalue(problem.objective)
+
+        # for c in crossings:
+        #     print c.value()
+        for edge, s_vars in seq_vars.items():
+            currentEdge = self.graph.edges[edge]
+            print edge
+            for s, r in sorted([(s.value(), r) for (r, s) in s_vars.items()]):
+                currentEdge['sequence'].append(r)
+                print s, r
+                currentEdge['width'] += self._getTotalThickness(edge, r)
 
     def _getTotalThickness(self, edge, route):
         if route in ['200', '201', '202', '203', '204', '7']:
