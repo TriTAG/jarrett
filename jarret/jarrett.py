@@ -124,12 +124,16 @@ def getTopologyAndRoutes(routeLines, terminals, supplementaryLines, debugFolder=
 
 
 schedule, linestrings, terminals, roundabouts = getScheduleAndShapes()
-# G, shapePaths = getTopologyAndRoutes(linestrings, terminals, roundabouts, 'debug')
-#
-# with open('jarret.pickle', 'w') as fp:
-#     pickle.dump((G, shapePaths), fp)
-with open('jarret.pickle') as fp:
-    (G, shapePaths) = pickle.load(fp)
+
+fullRun = False
+if fullRun:
+    G, shapePaths = getTopologyAndRoutes(linestrings, terminals, roundabouts, 'debug')
+
+    with open('jarret.pickle', 'w') as fp:
+        pickle.dump((G, shapePaths), fp)
+else:
+    with open('jarret.pickle') as fp:
+        (G, shapePaths) = pickle.load(fp)
 
 TG = TransitGraph(G, shapePaths, schedule)
 M = SimpleMap(TG)
