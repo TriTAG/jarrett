@@ -3,6 +3,7 @@ import numpy as np
 import math
 from itertools import combinations, cycle
 from util import edgeKey, firstNode, fullEdge, getDirection
+from transitfeed import Trip
 
 
 class TransitGraph():
@@ -16,8 +17,8 @@ class TransitGraph():
         self._buildGraph(graph)
         print 'map trips to graph'
         self._mapTripsToGraph(paths)
-        print 'compute order'
-        self._computeOrder()
+        # print 'compute order'
+        # self._computeOrder()
 
     def _buildGraph(self, graph):
         for u in graph:
@@ -77,12 +78,43 @@ class TransitGraph():
                         c, C = lastNode
                         if route not in self.graph.edges[(c, C), (u, (a, b, i))]['routes']:
                             self.graph.edges[(c, C), (u, (a, b, i))]['routes'][route] = []
-                        trips = self.graph.edges[A, B]['routes'][route]
+                        trips = self.graph.edges[(c, C), (u, (a, b, i))]['routes'][route]
                         if C < (a, b, i):
                             trips.append((trip.trip_id, 1))
                         else:
                             trips.append((trip.trip_id, -1))
                 lastNode = (v, (a, b, i))
+        self._linkBlocks(paths)
+
+    def _linkBlocks(self, paths):
+        blocks = {}
+        for trip in self.schedule.GetTripList():
+            bid = trip.block_id
+            if bid is None:
+                continue
+            if bid not in blocks:
+                blocks[bid] = []
+            blocks[bid].append(trip)
+        for bid, trips in blocks.items():
+            trips = sorted(trips, key=Trip.GetStartTime)
+            for t1, t2 in zip(trips[:-1], trips[1:]):
+                p1 = paths[t1.shape_id]
+                p2 = paths[t2.shape_id]
+                u, v, i = p1[-1]
+                x, y, j = p2[0]
+                if (t1.route_id == t2.route_id and v == x and
+                   (u, v, i) != (x, y, j) and u != y):
+                    A = edgeKey(u, v, i)
+                    B = edgeKey(x, y, j)
+                    if t1.route_id not in self.graph.edges[(v, A), (x, B)]['routes']:
+                        self.graph.edges[(v, A), (x, B)]['routes'][t1.route_id] = []
+                    trips = self.graph.edges[(v, A), (x, B)]['routes'][t1.route_id]
+                    if A < B:
+                        trips.append((t1.trip_id, 1))
+                    else:
+                        trips.append((t2.trip_id, -1))
+
+
 
     def _computeOrder(self):
         for edge in self.graph.edges:
